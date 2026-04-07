@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "338554913433",
+    "project_id": "substate-15175",
+    "storage_bucket": "substate-15175.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:338554913433:android:d1c7c2cf396879be576e08",
+        "android_client_info": {
+          "package_name": "com.example.midterm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAvnshP_psxwGf8E6AscqsAcJslnKjL_ks"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:338554913433:android:058d613a6c9cd46d576e08",
+        "android_client_info": {
+          "package_name": "com.example.substate"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAvnshP_psxwGf8E6AscqsAcJslnKjL_ks"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
