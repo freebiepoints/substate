@@ -39,18 +39,3 @@ SubState is a modern Android application designed to help users track, manage, a
 3. **Build**:
    - Open the project in Android Studio (Ladybug or newer recommended).
    - Sync Gradle and run the `:app` module.
-
-## 💡 Presentation Highlights
-
-If you are presenting this app, look out for these technical implementations:
-
-- **Extension Functions**: Used in `Subscription.kt` to keep the data model clean while encapsulating business logic for cost calculation and date advancement.
-- **Reactive UI**: The registration screen uses a `TextWatcher` to provide live feedback on security requirements.
-- **Background Reliability**: The `SubscriptionWorker` demonstrates how to handle long-running tasks and notifications outside the app's immediate lifecycle.
-- **Easter Eggs (Demo Tools)**:
-  - **Dummy Data**: Tap the **Monthly Total Card** 5 times on the dashboard to quickly populate the app with demo subscriptions.
-  - **Notification Test**: Tap the **Annual Total Card** 5 times to trigger an immediate renewal notification for testing.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
