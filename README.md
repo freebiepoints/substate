@@ -28,7 +28,7 @@ SubState is a modern Android application designed to help users track, manage, a
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-username/SubState.git
+   git clone https://github.com/freebiepoints/SubState.git
    ```
 2. **Firebase Configuration**:
    - Create a project in the [Firebase Console](https://console.firebase.google.com/).

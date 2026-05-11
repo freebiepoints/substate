@@ -7,8 +7,10 @@ import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import android.provider.CalendarContract
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -16,6 +18,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.work.*
@@ -24,7 +29,7 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
-import java.util.Calendar
+import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -35,6 +40,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var auth: FirebaseAuth
     private lateinit var db: FirebaseFirestore
+    private lateinit var viewModel: SubscriptionViewModel
     private lateinit var adapter: SubscriptionAdapter
 
     private var allSubscriptions = listOf<Subscription>()
@@ -46,10 +52,13 @@ class MainActivity : AppCompatActivity() {
 
     // Set of selected categories for filtering the list
     private var selectedCategories = mutableSetOf<String>()
+    private var currentStatusFilter = "All" // "All", "Active", "Inactive"
 
     private lateinit var totalMonthlyTextView: TextView
     private lateinit var totalAnnualTextView: TextView
     private lateinit var emptyStateTextView: TextView
+    private lateinit var connectionStatusIcon: ImageView
+    private lateinit var connectionStatusText: TextView
 
     // Counters and timers for hidden "easter egg" triggers (secret debug features)
     private var monthlyCardClickCount = 0
@@ -82,6 +91,16 @@ class MainActivity : AppCompatActivity() {
 
         auth = FirebaseAuth.getInstance()
         db = FirebaseFirestore.getInstance()
+        
+        // Explicitly enable offline persistence using the modern API
+        val settings = com.google.firebase.firestore.FirebaseFirestoreSettings.Builder()
+            .setLocalCacheSettings(com.google.firebase.firestore.PersistentCacheSettings.newBuilder().build())
+            .build()
+        db.firestoreSettings = settings
+
+        val repository = SubscriptionRepository(db, applicationContext)
+        val factory = SubscriptionViewModelFactory(repository)
+        viewModel = androidx.lifecycle.ViewModelProvider(this, factory)[SubscriptionViewModel::class.java]
 
         // Redirect to Login if user is not authenticated
         if (auth.currentUser == null) {
@@ -91,7 +110,12 @@ class MainActivity : AppCompatActivity() {
 
         setupUI()
         updateSortIcons()
-        fetchSubscriptions() // Start listening for Firestore updates
+        observeViewModel()
+        
+        val userId = auth.currentUser?.uid
+        if (userId != null) {
+            viewModel.loadSubscriptions(userId)
+        }
         
         checkNotificationPermission()
         scheduleSubscriptionReminders() // Ensure the background worker is active
@@ -127,14 +151,17 @@ class MainActivity : AppCompatActivity() {
         totalMonthlyTextView = findViewById(R.id.totalMonthlyTextView)
         totalAnnualTextView = findViewById(R.id.totalAnnualTextView)
         emptyStateTextView = findViewById(R.id.emptyStateTextView)
+        connectionStatusIcon = findViewById(R.id.connectionStatusIcon)
+        connectionStatusText = findViewById(R.id.connectionStatusText)
 
         val recyclerView = findViewById<RecyclerView>(R.id.subscriptionRecyclerView)
         recyclerView.layoutManager = LinearLayoutManager(this)
 
         // Initialize adapter with callbacks for updating/deleting from the list
         adapter = SubscriptionAdapter(
-            onUpdate = { sub -> updateSubscriptionInFirestore(sub) },
-            onDelete = { sub -> deleteSubscriptionFromFirestore(sub) }
+            onUpdate = { sub -> viewModel.updateSubscription(sub) },
+            onDelete = { sub -> viewModel.deleteSubscription(sub) },
+            onExportToCalendar = { sub -> exportToCalendar(sub) }
         )
         recyclerView.adapter = adapter
 
@@ -153,8 +180,9 @@ class MainActivity : AppCompatActivity() {
         findViewById<MaterialButton>(R.id.sortFeeButton).setOnClickListener { toggleSort("fee") }
         findViewById<MaterialButton>(R.id.sortDateButton).setOnClickListener { toggleSort("dueDate") }
 
-        // PRESENTATION TIP: Highlighting filtering & sorting logic
+        // Filter buttons
         findViewById<Button>(R.id.filterButton).setOnClickListener { showFilterDialog() }
+        findViewById<Button>(R.id.statusFilterButton).setOnClickListener { showStatusFilterDialog() }
 
         /**
          * DEBUG FEATURE: "Easter Eggs"
@@ -181,6 +209,45 @@ class MainActivity : AppCompatActivity() {
             if (annualCardClickCount == 5) {
                 annualCardClickCount = 0
                 triggerNotificationTest()
+            }
+        }
+    }
+
+    private fun observeViewModel() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    viewModel.subscriptions.collect { subs ->
+                        allSubscriptions = subs
+                        applyFiltersAndSort()
+                    }
+                }
+
+                launch {
+                    viewModel.totalMonthly.collect { total ->
+                        totalMonthlyTextView.text = String.format(Locale.getDefault(), "$%.2f", total)
+                    }
+                }
+
+                launch {
+                    viewModel.totalAnnual.collect { total ->
+                        totalAnnualTextView.text = String.format(Locale.getDefault(), "$%.2f", total)
+                    }
+                }
+
+                launch {
+                    viewModel.isConnected.collect { isConnected ->
+                        if (isConnected) {
+                            connectionStatusIcon.setImageResource(android.R.drawable.presence_online)
+                            connectionStatusIcon.setColorFilter(ContextCompat.getColor(this@MainActivity, android.R.color.holo_green_dark))
+                            connectionStatusText.text = "Online"
+                        } else {
+                            connectionStatusIcon.setImageResource(android.R.drawable.presence_offline)
+                            connectionStatusIcon.setColorFilter(ContextCompat.getColor(this@MainActivity, android.R.color.holo_red_dark))
+                            connectionStatusText.text = "Offline"
+                        }
+                    }
+                }
             }
         }
     }
@@ -212,9 +279,10 @@ class MainActivity : AppCompatActivity() {
             
             for (i in names.indices) {
                 val ref = db.collection("subscriptions").document()
+                val pricePoint = PricePoint(price = fees[i], date = Timestamp.now())
                 val sub = Subscription(
                     serviceName = names[i], category = categories[i], iconUrl = icons[i],
-                    fee = fees[i], schedule = "Monthly", userId = userId, notes = "DUMMY_DATA",
+                    priceHistory = listOf(pricePoint), schedule = "Monthly", userId = userId, notes = "DUMMY_DATA",
                     isActive = true, dueDate = Timestamp.now()
                 )
                 val (monthly, annual) = sub.calculateEquivalents()
@@ -229,69 +297,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Real-time listener for user subscriptions from Firestore.
-     * 
-     * TECHNICAL HIGHLIGHT: addSnapshotListener provides a "live" stream. 
-     * Any change in the database (even from another device) triggers this 
-     * callback, ensuring the UI is always in sync without manual refreshing.
-     */
-    private fun fetchSubscriptions() {
-        val userId = auth.currentUser?.uid ?: return
-        db.collection("subscriptions")
-            .whereEqualTo("userId", userId)
-            .addSnapshotListener { snapshot, e ->
-                if (e != null) return@addSnapshotListener
-                if (snapshot != null) {
-                    val now = Calendar.getInstance()
-                    val subscriptions = mutableListOf<Subscription>()
-                    for (doc in snapshot.documents) {
-                        val sub = doc.toObject(Subscription::class.java)?.copy(id = doc.id)
-                        if (sub != null) {
-                            // DOMAIN LOGIC: If a due date has passed, we don't just show it as 'late'.
-                            // We automatically advance it to the next occurrence (Monthly/Weekly/etc).
-                            val due = sub.dueDate?.toDate()
-                            if (due != null && Calendar.getInstance().apply { time = due }.before(now)) {
-                                val nextDate = sub.getNextOccurrence()
-                                db.collection("subscriptions").document(doc.id).update("dueDate", Timestamp(nextDate))
-                                subscriptions.add(sub.copy(dueDate = Timestamp(nextDate)))
-                            } else {
-                                subscriptions.add(sub)
-                            }
-                        }
-                    }
-                    allSubscriptions = subscriptions
-                    applyFiltersAndSort() // Re-apply current sort/filter to the new data set
-                }
-            }
-    }
-
-    private fun updateSubscriptionInFirestore(sub: Subscription) {
-        val (monthly, annual) = sub.calculateEquivalents()
-        db.collection("subscriptions").document(sub.id).set(sub.copy(monthlyEquivalent = monthly, annualEquivalent = annual))
-    }
-
-    private fun deleteSubscriptionFromFirestore(sub: Subscription) {
-        db.collection("subscriptions").document(sub.id).delete()
-    }
-
-    /**
-     * Filters and sorts the local list of subscriptions before submitting to the RecyclerView adapter.
-     */
     private fun applyFiltersAndSort() {
-        filteredSubscriptions = if (selectedCategories.isEmpty()) allSubscriptions else allSubscriptions.filter { selectedCategories.contains(it.category) }
+        // Apply Status Filter (All/Active/Inactive)
+        var list = when (currentStatusFilter) {
+            "Active" -> allSubscriptions.filter { it.isActive }
+            "Inactive" -> allSubscriptions.filter { !it.isActive }
+            else -> allSubscriptions
+        }
+
+        // Apply Category Filter
+        if (selectedCategories.isNotEmpty()) {
+            list = list.filter { selectedCategories.contains(it.category) }
+        }
         
         // Show/Hide empty state message
         emptyStateTextView.visibility = if (allSubscriptions.isEmpty()) View.VISIBLE else View.GONE
 
+        // Apply Sorting
         filteredSubscriptions = when (currentSortField) {
-            "serviceName" -> if (isAscending) filteredSubscriptions.sortedBy { it.serviceName.lowercase() } else filteredSubscriptions.sortedByDescending { it.serviceName.lowercase() }
-            "fee" -> if (isAscending) filteredSubscriptions.sortedBy { it.fee } else filteredSubscriptions.sortedByDescending { it.fee }
-            "dueDate" -> if (isAscending) filteredSubscriptions.sortedBy { it.dueDate } else filteredSubscriptions.sortedByDescending { it.dueDate }
-            else -> filteredSubscriptions
+            "serviceName" -> if (isAscending) list.sortedBy { it.serviceName.lowercase() } else list.sortedByDescending { it.serviceName.lowercase() }
+            "fee" -> if (isAscending) list.sortedBy { it.currentPrice } else list.sortedByDescending { it.currentPrice }
+            "dueDate" -> if (isAscending) list.sortedBy { it.dueDate } else list.sortedByDescending { it.dueDate }
+            else -> list
         }
         adapter.submitList(filteredSubscriptions)
-        updateSummary()
     }
 
     private fun toggleSort(field: String) {
@@ -311,16 +340,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Recalculates the total monthly and annual costs for all active subscriptions.
-     */
-    private fun updateSummary() {
-        var totalMonthly = 0.0; var totalAnnual = 0.0
-        for (sub in filteredSubscriptions) if (sub.isActive) { totalMonthly += sub.monthlyEquivalent; totalAnnual += sub.annualEquivalent }
-        totalMonthlyTextView.text = String.format(Locale.getDefault(), "$%.2f", totalMonthly)
-        totalAnnualTextView.text = String.format(Locale.getDefault(), "$%.2f", totalAnnual)
-    }
-
-    /**
      * Displays a multi-choice dialog to filter subscriptions by category.
      */
     private fun showFilterDialog() {
@@ -334,6 +353,57 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Apply") { _, _ -> applyFiltersAndSort() }
             .setNegativeButton("Clear All") { _, _ -> selectedCategories.clear(); applyFiltersAndSort() }
             .show()
+    }
+
+    /**
+     * Displays a single-choice dialog to filter by Active/Inactive status.
+     */
+    private fun showStatusFilterDialog() {
+        val statuses = arrayOf("All", "Active", "Inactive")
+        var selectedIdx = statuses.indexOf(currentStatusFilter)
+        
+        AlertDialog.Builder(this)
+            .setTitle("Filter by Status")
+            .setSingleChoiceItems(statuses, selectedIdx) { dialog, which ->
+                currentStatusFilter = statuses[which]
+                findViewById<MaterialButton>(R.id.statusFilterButton).text = "Status: ${currentStatusFilter}"
+                applyFiltersAndSort()
+                dialog.dismiss()
+            }
+            .show()
+    }
+
+    /**
+     * Intent Logic: Uses CalendarContract to create an ACTION_INSERT intent.
+     * This is a "soft" intent that hands off data to the system calendar.
+     */
+    private fun exportToCalendar(subscription: Subscription) {
+        val intent = Intent(Intent.ACTION_INSERT).apply {
+            data = CalendarContract.Events.CONTENT_URI
+            putExtra(CalendarContract.Events.TITLE, "Subscription: ${subscription.serviceName}")
+            putExtra(CalendarContract.Events.DESCRIPTION, "Payment for ${subscription.serviceName}. Notes: ${subscription.notes}")
+            
+            // Set Start Time (using the due date)
+            val startTime = subscription.dueDate?.toDate()?.time ?: System.currentTimeMillis()
+            putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, startTime)
+            
+            // Set All Day
+            putExtra(CalendarContract.EXTRA_EVENT_ALL_DAY, true)
+            
+            // Set Recurrence Rule (RRULE)
+            subscription.getRecurrenceRule()?.let { rrule ->
+                putExtra(CalendarContract.Events.RRULE, rrule)
+            }
+            
+            // Set access level to private for financial security
+            putExtra(CalendarContract.Events.ACCESS_LEVEL, CalendarContract.Events.ACCESS_PRIVATE)
+        }
+
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "No calendar app found", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun goToLogin() {

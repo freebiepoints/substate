@@ -73,6 +73,19 @@
             app:layout_constraintBottom_toBottomOf="@id/itemIconImageView"
             app:layout_constraintEnd_toEndOf="parent" />
 
+        <TextView
+            android:id="@+id/pendingSyncTextView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Pending Sync"
+            android:textColor="@android:color/holo_orange_dark"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:visibility="gone"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/itemFeeTextView"
+            tools:visibility="visible" />
+
         <!-- EXPANDED CONTENT -->
         <LinearLayout
             android:id="@+id/expandedLayout"
@@ -204,6 +217,17 @@
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintStart_toEndOf="@id/itemDueDateLabel" />
 
+                <TextView
+                    android:id="@+id/priceHikeTextView"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textColor="@android:color/holo_red_dark"
+                    android:textSize="12sp"
+                    android:textStyle="italic"
+                    app:layout_constraintTop_toBottomOf="@id/itemDueDateValue"
+                    tools:text="Price increased by 15%" />
+
             </androidx.constraintlayout.widget.ConstraintLayout>
 
             <!-- EDIT MODE VIEW -->
@@ -330,6 +354,15 @@
                     android:id="@+id/activeSwitch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content" />
+
+                <ImageButton
+                    android:id="@+id/calendarButton"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="8dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    app:srcCompat="@android:drawable/ic_menu_today"
+                    app:tint="?attr/colorPrimary" />
 
                 <ImageButton
                     android:id="@+id/deleteButton"

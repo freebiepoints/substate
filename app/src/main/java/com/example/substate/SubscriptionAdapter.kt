@@ -25,7 +25,8 @@ import java.util.*
  */
 class SubscriptionAdapter(
     private val onUpdate: (Subscription) -> Unit,
-    private val onDelete: (Subscription) -> Unit
+    private val onDelete: (Subscription) -> Unit,
+    private val onExportToCalendar: (Subscription) -> Unit
 ) : ListAdapter<Subscription, SubscriptionAdapter.ViewHolder>(SubscriptionDiffCallback()) {
 
     // Date format for the collapsed view item
@@ -66,7 +67,6 @@ class SubscriptionAdapter(
         // Handle item clicks to expand/collapse
         holder.itemView.setOnClickListener {
             if (!isEditing && !isGridView) {
-                val previousExpandedId = expandedId
                 expandedId = if (isExpanded) null else subscription.id
                 notifyDataSetChanged()
             }
@@ -101,7 +101,10 @@ class SubscriptionAdapter(
         private val statusLabel: TextView = itemView.findViewById(R.id.statusLabel)
         private val activeSwitch: SwitchMaterial = itemView.findViewById(R.id.activeSwitch)
         private val deleteButton: ImageButton = itemView.findViewById(R.id.deleteButton)
+        private val calendarButton: ImageButton = itemView.findViewById(R.id.calendarButton)
         private val modifySaveButton: Button = itemView.findViewById(R.id.modifySaveButton)
+        private val priceHikeTextView: TextView = itemView.findViewById(R.id.priceHikeTextView)
+        private val pendingSyncTextView: TextView = itemView.findViewById(R.id.pendingSyncTextView)
 
         private var tempSelectedIcon: String? = null
         private var tempSelectedColor: Int? = null
@@ -120,11 +123,13 @@ class SubscriptionAdapter(
                 "Annually" -> "/yr"
                 else -> ""
             }
-            feeTextView.text = String.format(Locale.getDefault(), "$%.2f%s", subscription.fee, suffix)
+            feeTextView.text = String.format(Locale.getDefault(), "$%.2f%s", subscription.currentPrice, suffix)
             
             subscription.dueDate?.let {
                 dueDateCollapsed.text = collapsedDateFormat.format(it.toDate())
             }
+
+            pendingSyncTextView.visibility = if (subscription.isPendingSync) View.VISIBLE else View.GONE
 
             // Toggle visibility of expanded details
             expandedLayout.visibility = if (isExpanded) View.VISIBLE else View.GONE
@@ -146,11 +151,19 @@ class SubscriptionAdapter(
             dueDateValue.text = subscription.dueDate?.let { fullDateFormat.format(it.toDate()) } ?: "Not set"
             statusLabel.text = if (subscription.isActive) "Active" else "Inactive"
 
+            val hikeString = subscription.getPriceHikeString()
+            if (hikeString.isNotEmpty()) {
+                priceHikeTextView.text = hikeString
+                priceHikeTextView.visibility = View.VISIBLE
+            } else {
+                priceHikeTextView.visibility = View.GONE
+            }
+
             // Populate edit fields if in editing mode
             if (editingThis) {
                 if (editName.tag != subscription.id) {
                     editName.setText(subscription.serviceName)
-                    editFee.setText(subscription.fee.toString())
+                    editFee.setText(subscription.currentPrice.toString())
                     
                     val schedules = arrayOf("Weekly", "Monthly", "Annually")
                     editSchedule.setAdapter(android.widget.ArrayAdapter(itemView.context, android.R.layout.simple_list_item_1, schedules))
@@ -216,6 +229,10 @@ class SubscriptionAdapter(
                 showDeleteConfirmation(subscription)
             }
 
+            calendarButton.setOnClickListener {
+                onExportToCalendar(subscription)
+            }
+
             // Handle Modify/Save button clicks
             modifySaveButton.setOnClickListener {
                 if (!editingThis) {
@@ -223,7 +240,14 @@ class SubscriptionAdapter(
                     notifyDataSetChanged()
                 } else {
                     val newName = editName.text.toString().trim()
-                    val newFee = editFee.text.toString().toDoubleOrNull() ?: subscription.fee
+                    val newPrice = editFee.text.toString().toDoubleOrNull() ?: subscription.currentPrice
+                    
+                    val updatedPriceHistory = if (newPrice != subscription.currentPrice) {
+                        subscription.priceHistory + PricePoint(newPrice, com.google.firebase.Timestamp.now())
+                    } else {
+                        subscription.priceHistory
+                    }
+
                     val newSchedule = editSchedule.text.toString()
                     val newCategory = editCategory.text.toString()
                     val newAccount = editAccount.text.toString().trim()
@@ -232,7 +256,7 @@ class SubscriptionAdapter(
                     
                     val updatedSub = subscription.copy(
                         serviceName = newName,
-                        fee = newFee,
+                        priceHistory = updatedPriceHistory,
                         schedule = newSchedule,
                         category = newCategory,
                         paymentAccount = newAccount,

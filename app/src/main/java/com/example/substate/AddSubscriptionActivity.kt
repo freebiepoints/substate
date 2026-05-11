@@ -1,6 +1,5 @@
 package com.example.substate
 
-import android.content.Context
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -15,6 +14,8 @@ import com.google.android.material.textfield.TextInputEditText
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreSettings
+import com.google.firebase.firestore.PersistentCacheSettings
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -42,6 +43,12 @@ class AddSubscriptionActivity : AppCompatActivity() {
 
         auth = FirebaseAuth.getInstance()
         db = FirebaseFirestore.getInstance()
+        
+        // Ensure offline persistence is active here too for "Pending Sync" to work correctly
+        val settings = FirebaseFirestoreSettings.Builder()
+            .setLocalCacheSettings(PersistentCacheSettings.newBuilder().build())
+            .build()
+        db.firestoreSettings = settings
 
         // Bind UI components
         val serviceIconImageView = findViewById<ImageView>(R.id.serviceIconImageView)
@@ -222,11 +229,20 @@ class AddSubscriptionActivity : AppCompatActivity() {
     private fun saveSubscription(name: String, fee: Double, schedule: String, category: String, account: String, notes: String) {
         val userId = auth.currentUser?.uid ?: return
         
+        val pricePoint = PricePoint(price = fee, date = Timestamp.now())
+        
         val sub = Subscription(
-            serviceName = name, fee = fee, schedule = schedule, category = category,
-            paymentAccount = account, dueDate = selectedDate?.let { Timestamp(it) },
-            userId = userId, notes = notes, iconUrl = selectedIconName,
-            iconColor = selectedIconColor, isActive = true
+            serviceName = name, 
+            priceHistory = listOf(pricePoint),
+            schedule = schedule, 
+            category = category,
+            paymentAccount = account, 
+            dueDate = selectedDate?.let { Timestamp(it) },
+            userId = userId, 
+            notes = notes, 
+            iconUrl = selectedIconName,
+            iconColor = selectedIconColor, 
+            isActive = true
         )
 
         // Ensure the initial due date is set to the next valid occurrence
